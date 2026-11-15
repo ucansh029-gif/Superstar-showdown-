@@ -7,6 +7,7 @@
 
 <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.146.0/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.146.0/examples/js/loaders/GLTFLoader.js"></script>
 
 <style>
 *{box-sizing:border-box}
@@ -789,7 +790,7 @@ function addPart(group, geometry, material, x, y, z) {
   return mesh;
 }
 
-function createFighter3D(slot) {
+function createProceduralFighter3D(slot) {
   const character = (typeof players !== "undefined" && players[slot]?.character)
     ? players[slot].character
     : (slot === 0 ? selectedCharacter : (gameMode === "cpu" ? "Raj Romeo" : "Dabang Veer"));
@@ -1017,6 +1018,86 @@ function triggerSuperpower(attackerSlot, character, defenderSlot) {
   }, 4700);
 }
 
+// ===============================
+// REAL 3D CHARACTER MODELS (loaded on top of the built-in fighters)
+// ===============================
+const MODEL_FILES = {
+  "Dabang Veer": "/characters/BlueSoldier_Male.gltf",
+  "Raj Romeo": "/characters/Ninja_Male_Hair.gltf",
+  "Thakur Vijay": "/characters/Cowboy_Male.gltf"
+};
+
+function createFighter3D(slot) {
+  const f = createProceduralFighter3D(slot);
+  upgradeToModel(f);
+  return f;
+}
+
+function upgradeToModel(f) {
+  const url = MODEL_FILES[f.character];
+  if (!url || !THREE.GLTFLoader) return;
+  new THREE.GLTFLoader().load(url, gltf => {
+    if (!f.root.parent) return;
+    const model = gltf.scene;
+    model.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+    f.modelScale = 4.3 / 3.13 / f.root.scale.x;
+    model.scale.setScalar(f.modelScale);
+    f.root.add(model);
+    f.body.visible = false;
+    f.legs.forEach(l => { l.visible = false; });
+    f.model = model;
+    f.mixer = new THREE.AnimationMixer(model);
+    f.actions = {};
+    gltf.animations.forEach(c => { f.actions[c.name] = f.mixer.clipAction(c); });
+    f.cur = null; f.curAct = null; f.lockUntil = 0; f.animId = 0; f.hitId = 0;
+    f.lastT = performance.now();
+    f.useModel = true;
+  }, undefined, err => console.warn("Model failed to load, using built-in fighter", err));
+}
+
+function updateModelFighter(f, now, moving, dead, won, blocking) {
+  const dt = Math.min(0.05, (now - f.lastT) / 1000);
+  f.lastT = now;
+  const play = (name, once, dur) => {
+    const next = f.actions[name];
+    if (!next) return;
+    next.reset();
+    next.enabled = true;
+    next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
+    next.clampWhenFinished = true;
+    next.timeScale = once && dur ? next.getClip().duration / (dur / 1000) : 1;
+    if (f.curAct && f.curAct !== next) next.crossFadeFrom(f.curAct, 0.1, false);
+    next.play();
+    f.curAct = next;
+    f.cur = name;
+    if (once) f.lockUntil = now + (dur || 400);
+  };
+  const a = f.anim;
+  const hitFresh = now - f.hitAt < 300;
+  const atkFresh = a && now - a.start < a.dur;
+
+  if (dead) {
+    if (f.cur !== "Death") play("Death", true, 900);
+  } else if (won) {
+    if (f.cur !== "Victory") play("Victory", false);
+  } else if (hitFresh && f.hitId !== f.hitAt) {
+    f.hitId = f.hitAt;
+    play("RecieveHit", true, 300);
+  } else if (atkFresh && f.animId !== a.start) {
+    f.animId = a.start;
+    const map = { punch: "Punch", kick: "SwordSlash", grab: "PickUp", special: "SwordSlash" };
+    play(map[a.type] || "Punch", true, a.dur);
+  } else if (now >= f.lockUntil) {
+    const want = moving ? "Run" : "Idle";
+    if (f.cur !== want) play(want, false);
+  }
+
+  f.mixer.update(dt);
+  const crouch = 0.55 + 0.45 * f.body.scale.y;
+  f.model.scale.set(f.modelScale, f.modelScale * crouch, f.modelScale);
+  f.model.rotation.x += ((blocking && !dead ? 0.22 : 0) - f.model.rotation.x) * 0.2;
+}
+
 function playAttackAnim(slot, type) {
   const f = fighters3D[slot];
   if (!f) return;
@@ -1047,6 +1128,11 @@ function updateFighterModels() {
     if (opp) {
       const want = opp.root.position.x >= f.root.position.x ? 1.0 : -1.0;
       f.root.rotation.y += (want - f.root.rotation.y) * 0.2;
+    }
+    if (f.useModel) {
+      updateModelFighter(f, now, moving, dead, won, !!(pl && pl.blocking));
+      f.root.rotation.x = 0;
+      return;
     }
     f.ko += ((dead ? 1 : 0) - f.ko) * 0.08;
     f.root.rotation.x = -f.ko * 1.45;
