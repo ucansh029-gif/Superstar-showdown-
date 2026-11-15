@@ -956,6 +956,112 @@ function spawnSparks(fighter) {
 // CINEMATIC SUPERPOWER
 // ===============================
 
+// ===============================
+// LIGHTNING SUPERPOWER
+// ===============================
+let audioCtx = null;
+function getAudioCtx() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch (e) { audioCtx = null; }
+  return audioCtx;
+}
+document.addEventListener("pointerdown", getAudioCtx, { once: true });
+
+function playThunder() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  // electric zap
+  const osc = ctx.createOscillator();
+  const og = ctx.createGain();
+  osc.type = "sawtooth";
+  osc.frequency.setValueAtTime(2200, t);
+  osc.frequency.exponentialRampToValueAtTime(70, t + 0.35);
+  og.gain.setValueAtTime(0.35, t);
+  og.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+  osc.connect(og); og.connect(ctx.destination);
+  osc.start(t); osc.stop(t + 0.42);
+  // thunder crack + rumble
+  const len = Math.floor(ctx.sampleRate * 1.3);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const lp = ctx.createBiquadFilter();
+  lp.type = "lowpass";
+  lp.frequency.setValueAtTime(6000, t);
+  lp.frequency.exponentialRampToValueAtTime(180, t + 1.2);
+  const ng = ctx.createGain();
+  ng.gain.value = 0.9;
+  src.connect(lp); lp.connect(ng); ng.connect(ctx.destination);
+  src.start(t);
+}
+
+const boltFlash = document.createElement("div");
+boltFlash.style.cssText = "position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:40;transition:opacity .25s ease-out";
+document.body.appendChild(boltFlash);
+
+function makeBoltMesh(x, z, color) {
+  const pts = [];
+  let px = x + (Math.random() - 0.5) * 1.2;
+  for (let i = 0; i <= 12; i++) {
+    const y = 14 - i * (14 / 12);
+    px += (Math.random() - 0.5) * (1.1 - i * 0.07);
+    pts.push(new THREE.Vector3(i === 12 ? x : px, y, z + (Math.random() - 0.5) * 0.3));
+  }
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 40, 0.07, 6, false), new THREE.MeshBasicMaterial({ color: 0xffffff })));
+  group.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 40, 0.24, 6, false), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.4 })));
+  return group;
+}
+
+function setGlow(f, color, amount) {
+  (f.model || f.root).traverse(o => {
+    if (!o.isMesh) return;
+    (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => {
+      if (m && m.emissive) { m.emissive.setHex(color); m.emissiveIntensity = amount; }
+    });
+  });
+}
+
+function lightningStrike(defender, color) {
+  if (!defender) return;
+  const c = new THREE.Color(color);
+  defender.shockColor = c.getHex();
+  defender.shockUntil = performance.now() + 1500;
+  [0, 380, 760, 1100].forEach((delay, n) => {
+    setTimeout(() => {
+      if (!scene || !defender.root.parent) return;
+      const x = defender.root.position.x;
+      const bolts = [makeBoltMesh(x, 0, c), makeBoltMesh(x + (n % 2 ? 0.8 : -0.8), 0.4, c)];
+      bolts.forEach(b => scene.add(b));
+      const light = new THREE.PointLight(c.getHex(), 9, 16);
+      light.position.set(x, 3, 2);
+      scene.add(light);
+      boltFlash.style.transition = "none";
+      boltFlash.style.opacity = "0.75";
+      requestAnimationFrame(() => {
+        boltFlash.style.transition = "opacity .3s ease-out";
+        boltFlash.style.opacity = "0";
+      });
+      playThunder();
+      spawnSparks(defender);
+      shake = 3.2;
+      setTimeout(() => {
+        bolts.forEach(b => {
+          scene.remove(b);
+          b.children.forEach(m => { m.geometry.dispose(); m.material.dispose(); });
+        });
+        scene.remove(light);
+      }, 160);
+    }, delay);
+  });
+}
+
 function triggerSuperpower(attackerSlot, character, defenderSlot) {
   if (cinematic || !fighters3D.length) return;
 
@@ -1002,7 +1108,7 @@ function triggerSuperpower(attackerSlot, character, defenderSlot) {
 
   cinematic = {
     started,
-    duration: 5000,
+    duration: 2800,
     attacker,
     defender,
     aura,
@@ -1012,10 +1118,11 @@ function triggerSuperpower(attackerSlot, character, defenderSlot) {
 
   shake = 2.2;
   spawnSparks(attacker);
+  lightningStrike(defender, info.color);
 
   setTimeout(() => {
     $("cinematic").classList.remove("show");
-  }, 4700);
+  }, 2500);
 }
 
 // ===============================
@@ -1123,6 +1230,14 @@ function updateFighterModels() {
     const dead = !!pl && pl.hp <= 0;
     const won = gameOver && !!pl && !dead;
     const bob = Math.sin(time * 2 + index);
+    if (f.shockUntil && now < f.shockUntil) {
+      setGlow(f, f.shockColor, 0.6 + Math.random() * 1.6);
+      f.root.rotation.z = (Math.random() - 0.5) * 0.28;
+      f.glowOn = true;
+    } else if (f.glowOn) {
+      setGlow(f, 0x000000, 0);
+      f.glowOn = false;
+    }
 
     // face the opponent, fall down when beaten
     if (opp) {
@@ -1427,14 +1542,16 @@ function applyDamage(attackerSlot, type) {
   if (defender.blocking) {
     defender.hp = Math.max(0, defender.hp - 3);
   } else {
-    const damage = type === "special" ? 34 :
+    const damage = type === "special" ? 40 :
                    type === "kick" ? 16 :
                    type === "grab" ? 20 : 10;
 
     defender.hp = Math.max(0, defender.hp - damage);
   }
 
-  attacker.meter = Math.min(100, attacker.meter + 15);
+  const wasFull = attacker.meter >= 100;
+  attacker.meter = Math.min(100, attacker.meter + 20);
+  if (!wasFull && attacker.meter >= 100 && attackerSlot === 0) say("SUPERPOWER READY! TAP POWER");
   playAttackAnim(attackerSlot, type);
   playHit(defenderSlot);
 
