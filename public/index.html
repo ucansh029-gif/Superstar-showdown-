@@ -928,7 +928,7 @@ function addPart(group, geometry, material, x, y, z) {
 function createProceduralFighter3D(slot) {
   const character = (typeof players !== "undefined" && players[slot]?.character)
     ? players[slot].character
-    : (slot === 0 ? selectedCharacter : (gameMode === "cpu" ? "Raj Romeo" : "Dabang Veer"));
+    : (slot === 0 ? selectedCharacter : (gameMode === "cpu" ? "Thakur Vijay" : "Dabang Veer"));
 
   const isV = character === "Dabang Veer", isR = character === "Raj Romeo";
   const cfg = isV ? { skin: 0xc98b63, top: 0x168bdf, bottom: 0x183e83, glove: 0xe63946, hair: 0x15110f, sleeves: false, full: false, h: 1.0 }
@@ -1614,11 +1614,11 @@ function startCPU() {
 
   players = [
     makePlayer(0, selectedCharacter),
-    makePlayer(1, "Raj Romeo")
+    makePlayer(1, "Thakur Vijay")
   ];
 
   $("p1Name").textContent = selectedCharacter.toUpperCase();
-  $("p2Name").textContent = "RAJ ROMEO";
+  $("p2Name").textContent = "THAKUR VIJAY";
 
   showScreen("battleScreen");
   initialize3D();
